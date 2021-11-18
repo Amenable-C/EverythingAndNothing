@@ -5,25 +5,6 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-/////////////////////////////////////////////////////////////////////////////////여기 일단 필요 없음.
-////////////////// Mini OLED Driver ////////////////////////
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
-
-// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
-// The pins for I2C are defined by the Wire-library. 
-// On an arduino UNO:       A4(SDA), A5(SCL)
-// On an arduino MEGA 2560: 20(SDA), 21(SCL)
-// On an arduino LEONARDO:   2(SDA),  3(SCL), ...
-#define OLED_RESET     4 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
-#define NUMFLAKES     10 // Number of snowflakes in the animation example
-
-#define LOGO_HEIGHT   16
-#define LOGO_WIDTH    16
-/////////////////////////////////////////////////////////////////////////////////여기 일단 필요 없음.
 
 /////////////////// Encoder Driver ////////////////////////
 #define ENC1_ADD 41
@@ -34,14 +15,14 @@ signed long encoder2count = 0;
 
 
 /////////////////// Steering Servo Control ///////////////////
-#define RC_SERVO_PIN 8
-#define NEURAL_ANGLE 90 // 서보의 중립 (0~180)
+#define RC_SERVO_PIN 29 ////////////////////////이거 나중에 다 바꿔주기////////////////////////////
+#define NEURAL_ANGLE 90 // 서보의 중립 (0~180) //90으로 놓고 조립
 #define LEFT_STEER_ANGLE -15
-#define RIGHT_STEER_ANGLE 15 // 나중에 차량에 맞게 바꿔야 함
+#define RIGHT_STEER_ANGLE 15 // 나중에 차량에 맞게 바꿔야 함 // 한계치보다 조금씩 적게 해야함
 
 #include <Servo.h>
 Servo Steeringservo;
-int Steering_Angle = NEURAL_ANGLE;
+int Steering_Angle = NEURAL_ANGLE; //중립
 
 void steering_control(){ // 최대, 최소에서 더 안 돌아가게 정의
   if(Steering_Angle <= LEFT_STEER_ANGLE + NEURAL_ANGLE)
@@ -49,6 +30,7 @@ void steering_control(){ // 최대, 최소에서 더 안 돌아가게 정의
   if(Steering_Angle >= RIGHT_STEER_ANGLE + NEURAL_ANGLE)
     Steering_Angle = RIGHT_STEER_ANGLE + NEURAL_ANGLE;
   Steeringservo.write(Steering_Angle);
+  Serial.println(Steering_Angle);
 }
 
 
@@ -232,28 +214,32 @@ void motor2_control(int dir, int speed)
 #include <Wire.h>
 int sensor_flag = 0;
 
+// 여기는 받는거 // angle, speed, sonar
 void receiveEvent(int howMany){
   unsigned char a[7]; //여기에 데이터 저장 
   // 통신프로토콜 정의 // '#'(start) + '제어 byte' + '2byte' + '*'
   a[0] = Wire.read(); // '#' = start
   a[1] = Wire.read(); // control = 제어->어떤 기능할건지
-  a[2] = Wire.read(); // data
-  a[3] = Wire.read(); // data
-  a[4] = Wire.read(); // data
-  a[5] = Wire.read(); // data (총 데이터는 4byte로 보낼 수 있음)
+  a[2] = Wire.read(); // data // about angle
+  a[3] = Wire.read(); // data // about angle
+  a[4] = Wire.read(); // data // about speed
+  a[5] = Wire.read(); // data (총 데이터는 4byte로 보낼 수 있음) // about speed
   a[6] = Wire.read(); // '*' = end
-
+  // 여기까지 값을 읽어 오는거
   // steering and motor control
   if((a[0] == '#') && (a[1] == 'C' ) && (a[6] == '*')){
-    Steering_Angle = a[2] * 256 + a[3]; // steering angle 0~180
-
+    Steering_Angle = a[2] * 256 + a[3]; // steering angle 0~180 // ROS에서 아두이노로 값을 준다는거
+    //Steering_Angle = 0; // test
+    steering_control(); // 여기 함수로 가서 차량에 맞게 값 입력
+    
     if((a[4]&0x80 >> 7) == 1){ // check MSB bit is 1 -> negative
-      Motor_Speed = ((255 - a[4]) + (256 - a[5])) * -1;
+      Motor_Speed = ((255 - a[4]) + (256 - a[5])) * -1; // 여기 두 개 -> 값을 정수 속도 값
     }
     else{
-      Motor_Speed = a[4]*256 + a[5];
+      Motor_Speed = a[4]*256 + a[5]; // 여기 두 개 -> 값을 정수 속도 값
     }
-    steering_control();
+    //Motor_Speed = 30; // test
+    // 그에 따른 전진, 후진, 멈춤
     if(Motor_Speed > 0)
       motor1_control(1, Motor_Speed);
     else if(Motor_Speed < 0)
@@ -264,11 +250,11 @@ void receiveEvent(int howMany){
 
   // sonar sensor control
   if((a[0] == '#') && (a[1] == 'S' ) && (a[6] == '*')){
-    sensor_flag = 1;
-    
+    sensor_flag = 1; // 값 자체를 받을 수는 없나?... 값을 받아야 하는데?
   }
 }
 
+// 여기는 주는거 // sonar, encoder
 void requestEvent(){
   unsigned char s[8] = {0, };
   encoder1count = readEncoder(1);
@@ -281,7 +267,7 @@ void requestEvent(){
   s[6] = (encoder1count&0x000000ff);  // encoder LSB 8bit
   s[7] = '*';
   Wire.write(s, 8); // respond
-  sensor_flag = 0; // 이게 먼지 다시 체크
+  sensor_flag = 0; // 이게 먼지 다시 체크 // 느릴수도 있다고 이렇게 sensor_flag를 쓴다고 하는데 머지??
 }
 
 
@@ -289,7 +275,7 @@ void requestEvent(){
 void setup() 
 {
   // 통신 부분
-  Wire.begin(5);  // I2C bus #5
+  Wire.begin(5);  // I2C bus #5 // 젯슨 나노에서 확인하면 5번 BUS를 사용해서 통신하는거 확인가능
   Wire.onRequest(requestEvent);  // register events
   Wire.onReceive(receiveEvent);
   
@@ -298,7 +284,7 @@ void setup()
   
   initEncoders();       Serial.println("Encoders Initialized...");  
   clearEncoderCount(1);  Serial.println("Encoder[1] Cleared...");
-  clearEncoderCount(2);  Serial.println("Encoder[2] Cleared...");
+  clearEncoderCount(2);  Serial.println("Encoder[2] Cleared..."); //2번은 안 필요한거 같은데??
   
  
   pinMode(STBY1, OUTPUT); pinMode(STBY2, OUTPUT);
@@ -306,21 +292,33 @@ void setup()
   pinMode(MOTOR2_EN1, OUTPUT);   pinMode(MOTOR2_EN2, OUTPUT);   pinMode(MOTOR2_PWM, OUTPUT);
   
   Steeringservo.attach(RC_SERVO_PIN);
-  //Steeringservo.write(Steering_Angle); // 이게 원래 있던거 // 주석 풀기
-  Steering_Angle = 30; // 이거 내가 그냥 임의의 값 넣은거 // 근데 원래는 90도 인데 왜 우리꺼는 30도가 거의 중립이지?
-  Steeringservo.write(Steering_Angle); // 중립 맞출려고 내가 넣은거
-
+  Steeringservo.write(Steering_Angle); // 이게 원래 있던거 // 주석 풀기 // 이게 값을 받아와서 작동하는거
+  // Steering_Angle = 30; // 이거 내가 그냥 임의의 값 넣은거 // 근데 원래는 90도 인데 왜 우리꺼는 30도가 거의 중립이지?
+  // Steeringservo.write(Steering_Angle); // 중립 맞출려고 내가 넣은거
+  // 일단 맨처음에 중립 서보모터에 맞춰서 각 조절해야함.
   delay(1000);
   
 }
 
 void loop() {
    encoder1count = readEncoder(1);  encoder2count = readEncoder(2); 
+   Steering_Angle = 90; // test
+   //Serial.print(Steering_Angle);
+   steering_control(); // 여기 함수로 가서 차량에 맞게 값 입력
+   Motor_Speed = 60;
+   if(Motor_Speed > 0)
+      motor1_control(1, Motor_Speed);
+    else if(Motor_Speed < 0)
+      motor1_control(-1, -Motor_Speed);
+    else
+      motor1_control(0, 0);
+   
+   //motor1_control(1, 30);
+//   delay(2000);
+
 //   
 //   Serial.print("Enc1: "); Serial.print(encoder1count); Serial.print(" "); 
 //   Serial.print("Enc2: "); Serial.println(encoder2count); 
-//
-//  
 
 
  ////////////////////////////// sonar체크 할려고 위에꺼 주석처리
@@ -343,18 +341,6 @@ void loop() {
   Serial.print("  Motor PWM : ");
   Serial.println(Motor_Speed);
  }
- //motor1_control(1, 25);
- //delay(1000);
  
-
-
-   
-  /* 
-   motor1_control(0, 100);
-   delay(1000);
-   motor1_control(1, 250);
-   delay(1000);
-    motor1_control(0, 100);
-   delay(1000);
-   */
+ 
 }
